@@ -31,7 +31,7 @@ func getOrderedStructNames(m map[string]Struct) []string {
 }
 
 // Output generates code and writes to w.
-func Output(w io.Writer, g *Generator, pkg string) {
+func Output(w io.Writer, g *Generator, pkg string, useValidator, skipCustomMarshalerUnmarshaler bool) {
 	structs := g.Structs
 	aliases := g.Aliases
 
@@ -46,7 +46,7 @@ func Output(w io.Writer, g *Generator, pkg string) {
 
 	for _, k := range getOrderedStructNames(structs) {
 		s := structs[k]
-		if s.GenerateCode {
+		if s.GenerateCode && !skipCustomMarshalerUnmarshaler {
 			emitMarshalCode(codeBuf, s, imports)
 			emitUnmarshalCode(codeBuf, s, imports)
 		}
@@ -78,6 +78,8 @@ func Output(w io.Writer, g *Generator, pkg string) {
 		for _, fieldKey := range getOrderedFieldNames(s.Fields) {
 			f := s.Fields[fieldKey]
 
+			tags := []string{}
+
 			// Only apply omitempty if the field is not required.
 			omitempty := ",omitempty"
 			if f.Required {
@@ -87,8 +89,15 @@ func Output(w io.Writer, g *Generator, pkg string) {
 			if f.Description != "" {
 				outputFieldDescriptionComment(f.Description, w)
 			}
+			tags = append(tags, fmt.Sprintf("json:\"%s%s\"", f.JSONName, omitempty))
 
-			fmt.Fprintf(w, "  %s %s `json:\"%s%s\"`\n", f.Name, f.Type, f.JSONName, omitempty)
+			if useValidator {
+				if validationTags := prepareValidationTags(f); len(validationTags) > 0 {
+					tags = append(tags, validationTags)
+				}
+			}
+
+			fmt.Fprintf(w, "  %s %s `%s`\n", f.Name, f.Type, strings.Join(tags, " "))
 		}
 
 		fmt.Fprintln(w, "}")
@@ -291,4 +300,17 @@ func cleanPackageName(pkg string) string {
 	pkg = strings.Replace(pkg, "_", "", -1)
 	pkg = strings.Replace(pkg, "-", "", -1)
 	return pkg
+}
+
+func prepareValidationTags(f Field) string {
+	validatorTags := []string{}
+	if f.Required {
+		validatorTags = append(validatorTags, "required")
+	}
+
+	if len(validatorTags) > 0 {
+		return fmt.Sprintf("validate:\"%s\"", strings.Join(validatorTags, ","))
+	}
+
+	return ""
 }
